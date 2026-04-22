@@ -210,19 +210,46 @@ int index_save(const Index *index) {
 // Returns 0 on success, -1 on error.
 int index_add(Index *index, const char *path) {
     FILE *f = fopen(path, "rb");
-if (!f) return -1;
+    if (!f) return -1;
 
-fseek(f, 0, SEEK_END);
-long size = ftell(f);
-fseek(f, 0, SEEK_SET);
+    fseek(f, 0, SEEK_END);
+    long size = ftell(f);
+    fseek(f, 0, SEEK_SET);
 
-void *buf = malloc(size);
-fread(buf, 1, size, f);
-fclose(f);
+    void *buf = malloc(size);
+    if (!buf) {
+        fclose(f);
+        return -1;
+    }
 
-ObjectID id;
-object_write(OBJ_BLOB, buf, size, &id);
-free(buf);
-    (void)index; (void)path;
-    return -1;
+    if (size > 0 && fread(buf, 1, size, f) != (size_t)size) {
+        fclose(f);
+        free(buf);
+        return -1;
+    }
+    fclose(f);
+
+    ObjectID id;
+    if (object_write(OBJ_BLOB, buf, size, &id) != 0) {
+        free(buf);
+        return -1;
+    }
+    free(buf);
+
+    IndexEntry *e = index_find(index, path);
+
+    if (e) {
+        e->hash = id;
+    } else {
+        if (index->count >= MAX_INDEX_ENTRIES) return -1;
+
+        e = &index->entries[index->count++];
+        e->hash = id;
+
+        strncpy(e->path, path, sizeof(e->path) - 1);
+        e->path[sizeof(e->path) - 1] = '\0';
+    }
+
+    // still incomplete (metadata + save not yet)
+    return 0;
 }
