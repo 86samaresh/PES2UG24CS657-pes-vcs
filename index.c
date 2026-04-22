@@ -209,8 +209,20 @@ int index_save(const Index *index) {
 //
 // Returns 0 on success, -1 on error.
 int index_add(Index *index, const char *path) {
-    // TODO: Implement file staging
-    // (See Lab Appendix for logical steps)
+    FILE *f = fopen(path, "rb");
+if (!f) return -1;
+
+fseek(f, 0, SEEK_END);
+long size = ftell(f);
+fseek(f, 0, SEEK_SET);
+
+void *buf = malloc(size);
+fread(buf, 1, size, f);
+fclose(f);
+
+ObjectID id;
+object_write(OBJ_BLOB, buf, size, &id);
+free(buf);
     (void)index; (void)path;
     return -1;
 }
