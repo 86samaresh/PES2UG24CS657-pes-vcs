@@ -137,10 +137,14 @@ object_path(&id, path, sizeof(path));
 
 // get directory path
 char dir[512];
-strncpy(dir, path, sizeof(dir));
-char *slash = strrchr(dir, '/');
-if (slash) *slash = '\0';
+snprintf(dir, sizeof(dir), "%s", path);
 
+char *slash = strrchr(dir, '/');
+if (!slash) {
+    free(full);
+    return -1;
+}
+*slash = '\0';
 // Step 10: create dirs
 // Step 10: create dirs safely
 if (mkdir(".pes", 0755) < 0 && errno != EEXIST) {
@@ -203,8 +207,83 @@ return 0;
 // The caller is responsible for calling free(*data_out).
 // Returns 0 on success, -1 on error (file not found, corrupt, etc.).
 int object_read(const ObjectID *id, ObjectType *type_out, void **data_out, size_t *len_out) {
-    // TODO: Implement
-    (void)id; (void)type_out; (void)data_out; (void)len_out;
-    return -1;
+    char path[512];
+    object_path(id, path, sizeof(path));
+
+    FILE *f = fopen(path, "rb");
+    if (!f) return -1;
+
+    fseek(f, 0, SEEK_END);
+    long size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+
+    if (size <= 0) {
+        fclose(f);
+        return -1;
+    }
+
+    uint8_t *raw = malloc(size);
+    if (!raw) {
+        fclose(f);
+        return -1;
+    }
+
+    if (fread(raw, 1, size, f) != (size_t)size) {
+        fclose(f);
+        free(raw);
+        return -1;
+    }
+    fclose(f);
+
+    // verify hash
+    ObjectID computed;
+    compute_hash(raw, size, &computed);
+    if (memcmp(computed.hash, id->hash, HASH_SIZE) != 0) {
+        free(raw);
+        return -1;
+    }
+
+    // find header end
+    uint8_t *null_byte = memchr(raw, '\0', size);
+    if (!null_byte) {
+        free(raw);
+        return -1;
+    }
+
+    char *header = (char *)raw;
+
+    if (strncmp(header, "blob ", 5) == 0) *type_out = OBJ_BLOB;
+    else if (strncmp(header, "tree ", 5) == 0) *type_out = OBJ_TREE;
+    else if (strncmp(header, "commit ", 7) == 0) *type_out = OBJ_COMMIT;
+    else {
+        free(raw);
+        return -1;
+    }
+
+    char *size_str = strchr(header, ' ') + 1;
+    size_t data_size = strtoul(size_str, NULL, 10);
+
+    uint8_t *data_start = null_byte + 1;
+    size_t remaining = size - (data_start - raw);
+
+    if (remaining != data_size) {
+        free(raw);
+        return -1;
+    }
+
+    uint8_t *data_copy = malloc(data_size);
+    if (!data_copy) {
+        free(raw);
+        return -1;
+    }
+
+    memcpy(data_copy, data_start, data_size);
+
+    free(raw);
+
+    *data_out = data_copy;
+    *len_out = data_size;
+
+    return 0;
 }
-phase i initialization
+
