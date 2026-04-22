@@ -119,6 +119,15 @@ full[header_len] = '\0';
 // Step 6: copy data
 memcpy(full + header_len + 1, data, len);
 
+// Step 7: compute SHA-256 of full object
+ObjectID id;
+compute_hash(full, total_size, &id);
+
+// store result
+if (id_out) {
+    *id_out = id;
+}
+
 // TEMP: not writing yet
 free(full);
 
