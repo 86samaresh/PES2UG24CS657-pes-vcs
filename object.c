@@ -16,6 +16,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <openssl/evp.h>
+#include <errno.h>
 
 // ─── PROVIDED ────────────────────────────────────────────────────────────────
 
@@ -119,19 +120,64 @@ full[header_len] = '\0';
 // Step 6: copy data
 memcpy(full + header_len + 1, data, len);
 
-// Step 7: compute SHA-256 of full object
+// Step 7: compute SHA-256
 ObjectID id;
 compute_hash(full, total_size, &id);
 
-// store result
-if (id_out) {
-    *id_out = id;
+// Step 8: dedup check
+if (object_exists(&id)) {
+    if (id_out) *id_out = id;
+    free(full);
+    return 0;
 }
 
-// TEMP: not writing yet
-free(full);
+// Step 9: build path
+char path[512];
+object_path(&id, path, sizeof(path));
 
-return -1;  // still failing intentionally
+// get directory path
+char dir[512];
+strncpy(dir, path, sizeof(dir));
+char *slash = strrchr(dir, '/');
+if (slash) *slash = '\0';
+
+// Step 10: create dirs
+// Step 10: create dirs safely
+if (mkdir(".pes", 0755) < 0 && errno != EEXIST) {
+    free(full);
+    return -1;
+}
+
+if (mkdir(OBJECTS_DIR, 0755) < 0 && errno != EEXIST) {
+    free(full);
+    return -1;
+}
+
+if (mkdir(dir, 0755) < 0 && errno != EEXIST) {
+    free(full);
+    return -1;
+}             // shard dir
+// Step 11: write file
+int fd = open(path, O_CREAT | O_WRONLY | O_TRUNC, 0644);
+if (fd < 0) {
+    free(full);
+    return -1;
+}
+
+if (write(fd, full, total_size) != (ssize_t)total_size) {
+    close(fd);
+    free(full);
+    return -1;
+}
+
+fsync(fd);
+close(fd);
+
+// Step 12: set output + cleanup
+if (id_out) *id_out = id;
+
+free(full);
+return 0;
 }
 
 // Read an object from the store.
@@ -161,3 +207,4 @@ int object_read(const ObjectID *id, ObjectType *type_out, void **data_out, size_
     (void)id; (void)type_out; (void)data_out; (void)len_out;
     return -1;
 }
+phase i initialization
