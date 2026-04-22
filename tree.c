@@ -129,6 +129,75 @@ int tree_serialize(const Tree *tree, void **data_out, size_t *len_out) {
 //   - object_write    : save that binary buffer to the store as OBJ_TREE
 //
 // Returns 0 on success, -1 on error.
+static int write_tree_level(IndexEntry *entries, int count, int prefix_len, ObjectID *id_out) {
+    Tree tree;
+    tree.count = 0;
+
+    int i = 0;
+    while (i < count) {
+        const char *rel_path = entries[i].path + prefix_len;
+        char *slash = strchr(rel_path, '/');
+
+        if (slash == NULL) {
+            // file
+            TreeEntry *te = &tree.entries[tree.count];
+
+            strncpy(te->name, rel_path, sizeof(te->name) - 1);
+            te->name[sizeof(te->name) - 1] = '\0';
+
+            te->mode = entries[i].mode;
+            te->hash = entries[i].hash;
+
+            tree.count++;
+            i++;
+        } else {
+            // directory
+            size_t dir_len = slash - rel_path;
+            char dir_name[256];
+
+            memcpy(dir_name, rel_path, dir_len);
+            dir_name[dir_len] = '\0';
+
+            int j = i + 1;
+            while (j < count) {
+                const char *p = entries[j].path + prefix_len;
+                if (strncmp(p, dir_name, dir_len) == 0 && p[dir_len] == '/')
+                    j++;
+                else
+                    break;
+            }
+
+            int new_prefix = prefix_len + dir_len + 1;
+
+            ObjectID subtree_id;
+            if (write_tree_level(entries + i, j - i, new_prefix, &subtree_id) != 0)
+                return -1;
+
+            TreeEntry *te = &tree.entries[tree.count];
+
+            strncpy(te->name, dir_name, sizeof(te->name) - 1);
+            te->name[sizeof(te->name) - 1] = '\0';
+
+            te->mode = MODE_DIR;
+            te->hash = subtree_id;
+
+            tree.count++;
+
+            i = j;
+        }
+    }
+
+    void *tree_data;
+    size_t tree_len;
+
+    if (tree_serialize(&tree, &tree_data, &tree_len) != 0)
+        return -1;
+
+    int rc = object_write(OBJ_TREE, tree_data, tree_len, id_out);
+    free(tree_data);
+
+    return rc;
+}
 int tree_from_index(ObjectID *id_out) {
     Index index;
     memset(&index, 0, sizeof(index));
